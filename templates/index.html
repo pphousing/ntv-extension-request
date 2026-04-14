@@ -66,8 +66,18 @@
                 </div>
 
                 <div class="mb-3">
-                    <label class="form-label">Date (If its a NTV put their check out date, if its an extension request put the new check out date)</label>
-                    <input type="text" name="date" class="form-control" required>
+                    <label class="form-label">New Checkout Date (If its an extension request or move-out withdrawal put the new check out date)</label>
+                    <input type="text" name="date" class="form-control">
+                </div>
+
+                <div class="mb-3">
+                    <label class="form-label">Original End Date (If its a NTV put their check out date found in the closed claims sheet)</label>
+                    <input type="text" name="original_end_date" class="form-control">
+                </div>
+
+                <div class="mb-3">
+                    <label class="form-label">Todays Date</label>
+                    <input type="text" name="todays_date" class="form-control" required>
                 </div>
 
                 <div class="mb-3">
