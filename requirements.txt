@@ -7,3 +7,4 @@ flask
 python-dotenv
 googlemaps
 google-api-python-client
+slack-sdk
