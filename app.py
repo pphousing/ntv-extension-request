@@ -102,6 +102,13 @@ def send_text(phone_num, message, first_name):
         "to":[phone_num],
         "userId":'USkdRcH9dR'
     }
+    elif first_name == 'Sara':
+        payload = {
+        "content": message,
+        "from":  'PN9mu12wlD',
+        "to":[phone_num],
+        "userId":'USPE5q7t2R'
+    }
     response = requests.post(url,headers=headers, json = payload)
     return response
 
