@@ -15,6 +15,8 @@ from io import StringIO
 import re
 import requests
 from math import radians, sin, cos, sqrt, atan2
+from slack_sdk import WebClient
+from slack_sdk.errors import SlackApiError
 
 # Load environment variables from .env file
 load_dotenv()
@@ -109,6 +111,18 @@ def extract_10_digit_number(phone_str):
     # Join and extract the last 10 digits (in case it includes country code)
     return '+1' + ''.join(digits)[-10:]
 
+def send_slack_message(channel_id: str, text: str) -> dict:
+    token = os.environ.get("SLACK_BOT_TOKEN")
+    if not token:
+        raise ValueError("SLACK_BOT_TOKEN is not set in environment variables.")
+
+    client = WebClient(token=token)
+    response = client.chat_postMessage(
+        channel=channel_id,
+        text=text
+    )
+    return response
+
 
 @app.route("/", methods=["GET"])
 def index():
@@ -132,6 +146,8 @@ def send_messages():
     relo_company = str(request.form['relo_company'])
     num_days  = int(request.form['num_days'])
     first_name = str(request.form['first_name'])
+    todays_date = str(request.form['todays_date'])
+    original_end_date = str(request.form['original_end_date'])
 
     ll_ntv_phone_template = (
         f"Hi {ll_name}! I hope you’re doing well. I just emailed you a Notice to Vacate "
@@ -142,12 +158,12 @@ def send_messages():
     t_ntv_phone_template = (
         f"Hi {t_name}! I hope you’re doing well. I just wanted to follow up with you that we are about {num_days} "
         f"days out from your lease termination date and received a notice to vacate from {relo_company}. "
-        f"We just want to ensure this is still the case and that you will not need the rental beyond {check_out_date}. Thank you!"
+        f"We just want to ensure this is still the case and that you will not need the rental beyond {original_end_date}. Thank you!"
     )
     ll_ntv_email_template = (
         "Dear {ll_name},<br><br>"
         "Please accept this 30-day notice that {t_name} has asked us to "
-        "communicate their intent to vacate the premises located at {address} on {check_out_date}. "
+        "communicate their intent to vacate the premises located at {address} on {original_end_date}. "
         "After the family vacates and a walk-through is completed, please return the security deposit "
         "via Zelle to info@paradisepointhousing.com.<br><br>"
         
@@ -167,7 +183,7 @@ def send_messages():
     ll_extension_phone_template = (
         f"Hi {ll_name}! I hope you’re doing well. I just emailed you an extension notice for the property at {address} "
         f"for {t_name} until {check_out_date}. Please note this is not a notice to vacate. "
-        f"Thank you for understanding and flexibility with our client. Please email us an acknoledgement email, thank you!"
+        f"Thank you for understanding and flexibility with our client. Please email us an acknowledgment email, thank you!"
     )
     t_extension_phone_template = (
         f"Hi {t_name}! I hope you’re doing well. I just wanted to follow up with you that we received an extension request "
@@ -177,7 +193,7 @@ def send_messages():
         "Dear {ll_name},<br><br>"
         "Please accept this letter as notification that the {t_name} family has requested an extension of their lease at {address} "
         "to {check_out_date}. Please note this is not a notice to vacate.<br><br>"
-        "Thank you for your understanding and flexibility with the {t_name} family. Please email us an acknoledgement email, "
+        "Thank you for your understanding and flexibility with the {t_name} family. Please email us an acknowledgment email, "
         "thank you!<br><br>"
         
         "Sincerely,<br>"
@@ -186,7 +202,7 @@ def send_messages():
     ll_withdrawal_phone_template = (
         f"Hi {ll_name}! I hope you’re doing well. I just emailed you a move out withdrawal notice and extension request "
         f"for the property at {address} for {t_name} until {check_out_date}."
-        f" Please email us an acknowledgement email, thank you!"
+        f" Please email us an acknowledgment email, thank you!"
     )
     t_withdrawal_phone_template = (
         f"Hi {t_name}! I hope you’re doing well. I just wanted to follow up with you that we received a move out withdrawal "
@@ -201,6 +217,45 @@ def send_messages():
         "Sincerely,<br>"
         "Paradise Point Housing"
     )
+    ntv_slack_template = """<!channel>
+NTV RECEIVED
+{address} / {t_name}
+Landlord: {ll_name}
+Client: {t_name}
+Lease end date: {original_end_date}
+Date Received: {todays_date}
+Messaged Client: Yes
+Emailed & Texted Landlord: Yes
+Replied to Relocation Company: Not Yet
+"""
+    ext_slack_template = """<!channel>
+Extension Request RECEIVED
+{address} / {t_name}
+Landlord: {ll_name}
+Client: {t_name}
+Lease end date: {original_end_date}
+New Requested End Date: {check_out_date}
+Date Received: {todays_date}
+Approved by Landlord (if applicable): Not Yet
+Messaged Client: Yes
+Emailed & Texted Landlord: Yes
+Replied to Relocation Company: Not Yet
+"""
+    wd_slack_template = """<!channel>
+Move Out Withdrawal RECEIVED
+{address} / {t_name}
+Landlord: {ll_name}
+Client: {t_name}
+Original Lease End Date: {original_end_date}
+New Requested End Date: {check_out_date}
+Date Received: {todays_date}
+Approved by Landlord (if applicable): Not Yet
+Messaged Client: Yes
+Emailed & Texted Landlord: Yes
+Replied to Relocation Company: Not Yet
+"""
+
+
     results = []  # this will feed your table
     submitted_data = {
         "Category": category,
@@ -223,12 +278,14 @@ def send_messages():
             results.append({
                 "channel": "OpenPhone SMS",
                 "recipient": f"{ll_name} ({ll_pn})",
-                "status":  ntv_ll_text.text})
+                "status": ntv_ll_text.text
+            })
         except Exception as e:
             results.append({
                 "channel": "OpenPhone SMS",
                 "recipient": f"{ll_name} ({ll_pn})",
-                "status": "ERROR"})
+                "status": f"ERROR: {str(e)}"
+            })
 
         # 2) tenant text
         try:
@@ -242,33 +299,68 @@ def send_messages():
             results.append({
                 "channel": "OpenPhone SMS",
                 "recipient": f"{t_name} ({t_pn})",
-                "status": "ERROR",
+                "status": f"ERROR: {str(e)}"
             })
 
-        # 3) gmail email
+        # 3) slack
+        try:
+            NTV_EXT_CHANNEL_ID = "C096RTJSKU0"
+
+            ntv_slack_text = ntv_slack_template.format(
+                address=address,
+                ll_name=ll_name,
+                t_name=t_name,
+                original_end_date=original_end_date,
+                todays_date=todays_date
+            )
+
+            ntv_slack_response = send_slack_message(
+                channel_id=NTV_EXT_CHANNEL_ID,
+                text=ntv_slack_text
+            )
+
+            results.append({
+                "channel": "Slack",
+                "recipient": NTV_EXT_CHANNEL_ID,
+                "status": f"Sent ({ntv_slack_response['ts']})"
+            })
+        except SlackApiError as e:
+            results.append({
+                "channel": "Slack",
+                "recipient": "C096RTJSKU0",
+                "status": f"ERROR: {e.response['error']}"
+            })
+        except Exception as e:
+            results.append({
+                "channel": "Slack",
+                "recipient": "C096RTJSKU0",
+                "status": f"ERROR: {str(e)}"
+            })
+
+        # 4) gmail email
         try:
             gmail_service = get_gmail_service()
             ntv_email = send_email(
                 gmail_service,
-                to=ll_email,  # <-- FIXED (was "email")
+                to=ll_email,
                 subject=f'Notice to Vacate: {address}/{t_name} Family',
                 body=ll_ntv_email_template.format(
                     ll_name=ll_name,
                     t_name=t_name,
                     address=address,
-                    check_out_date=check_out_date
+                    original_end_date=original_end_date
                 )
             )
             results.append({
                 "channel": "Gmail",
                 "recipient": f"{ll_name} ({ll_email})",
-                "status": ntv_email['labelIds']
+                "status": "Sent"
             })
         except Exception as e:
             results.append({
                 "channel": "Gmail",
                 "recipient": f"{ll_name} ({ll_email})",
-                "status": "ERROR"
+                "status": f"ERROR: {str(e)}"
             })
     if category == 'Extension Request':
         # 1) landlord text
@@ -299,7 +391,41 @@ def send_messages():
                 "status": "ERROR",
             })
 
-        # 3) gmail email
+        # 3) Slack
+        try:
+            NTV_EXT_CHANNEL_ID = "C096RTJSKU0"
+
+            ext_slack_text = ext_slack_template.format(
+                address=address,
+                ll_name=ll_name,
+                t_name=t_name,
+                original_end_date=original_end_date,
+                check_out_date=check_out_date,
+                todays_date=todays_date
+            )
+
+            ext_slack_response = send_slack_message(
+                channel_id=NTV_EXT_CHANNEL_ID,
+                text=ext_slack_text
+            )
+
+            results.append({
+                "channel": "Slack",
+                "recipient": NTV_EXT_CHANNEL_ID,
+                "status": f"Sent ({ext_slack_response['ts']})"
+            })
+        except SlackApiError as e:
+            results.append({
+                "channel": "Slack",
+                "recipient": "C096RTJSKU0",
+                "status": f"ERROR: {e.response['error']}"
+            })
+        except Exception as e:
+            results.append({
+                "channel": "Slack",
+                "recipient": "C096RTJSKU0",
+                "status": f"ERROR: {str(e)}"
+            })
         try:
             gmail_service = get_gmail_service()
             ext_email = send_email(
@@ -352,8 +478,43 @@ def send_messages():
                 "recipient": f"{t_name} ({t_pn})",
                 "status": "ERROR",
             })
+        # 3 Slack
+        try:
+            NTV_EXT_CHANNEL_ID = "C096RTJSKU0"
 
-        # 3) gmail email
+            wd_slack_text = wd_slack_template.format(
+                address=address,
+                ll_name=ll_name,
+                t_name=t_name,
+                original_end_date=original_end_date,
+                check_out_date=check_out_date,
+                todays_date=todays_date
+            )
+
+            wd_slack_response = send_slack_message(
+                channel_id=NTV_EXT_CHANNEL_ID,
+                text=wd_slack_text
+            )
+
+            results.append({
+                "channel": "Slack",
+                "recipient": NTV_EXT_CHANNEL_ID,
+                "status": f"Sent ({wd_slack_response['ts']})"
+            })
+        except SlackApiError as e:
+            results.append({
+                "channel": "Slack",
+                "recipient": "C096RTJSKU0",
+                "status": f"ERROR: {e.response['error']}"
+            })
+        except Exception as e:
+            results.append({
+                "channel": "Slack",
+                "recipient": "C096RTJSKU0",
+                "status": f"ERROR: {str(e)}"
+            })
+
+        # 4) gmail email
         try:
             gmail_service = get_gmail_service()
             wd_email = send_email(
